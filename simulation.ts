@@ -5,11 +5,15 @@ import * as fs from "fs";
 // ---------------------------------------------------------------------------
 
 const WCU_LIMIT_PER_PARTITION = 600; // max WCU a single customer may place on any one partition
-const WCU_PER_OPERATION = 11; // each resource write costs 11 WCU (10 KB item)
+const WCU_PER_OPERATION = 11; // each resource write costs 11 WCU (~10 KB item)
+const WCU_PER_GSI_OPERATION = 1; // GSI projections are small (≤1 KB)
 const NUM_BUCKETS = 32; // option 2: hash(resourceId) % 32
 const NUM_RUNS = 20_000; // Monte Carlo iterations per partition count
 
 const OPS_LIMIT_PER_PARTITION = WCU_LIMIT_PER_PARTITION / WCU_PER_OPERATION;
+// Without GSI bucketing, all writes for a container hit the same GSI partition.
+// The GSI caps throughput at WCU_LIMIT / 1 WCU regardless of base table partitioning.
+const GSI_OPS_LIMIT = WCU_LIMIT_PER_PARTITION / WCU_PER_GSI_OPERATION;
 
 // DynamoDB typically starts at 4 partitions and can grow into the thousands.
 // We include non-power-of-2 values to surface uneven-distribution effects.
@@ -174,6 +178,7 @@ function generateHtml(results: PartitionResult[]): string {
     option2Mean:         results.map((r) => r.option2Mean),
     option2P95:          results.map((r) => r.option2P95),
     option2P99:          results.map((r) => r.option2P99),
+    gsiBackpressure:     results.map(() => GSI_OPS_LIMIT),
   };
 
   const opsLimit = Math.round(OPS_LIMIT_PER_PARTITION);
@@ -258,6 +263,7 @@ function generateHtml(results: PartitionResult[]): string {
   <span class="param">Ops/s limit / partition: <strong>${opsLimit}</strong></span>
   <span class="param">Buckets (option 2): <strong>${NUM_BUCKETS}</strong></span>
   <span class="param">Option 2 ceiling: <strong>${opsCeiling.toLocaleString()} ops/s</strong></span>
+  <span class="param">GSI backpressure: <strong>${GSI_OPS_LIMIT.toLocaleString()} ops/s</strong></span>
   <span class="param">Runs / point: <strong>${NUM_RUNS.toLocaleString()}</strong></span>
 </div>
 
@@ -294,6 +300,14 @@ function generateHtml(results: PartitionResult[]): string {
       containers will have an unlucky bucket-to-partition mapping that permanently limits them below P99.
       Once N ≥ 32, load plateaus near <code>${opsCeiling} ops/s</code>.
     </li>
+    <li>
+      <strong>GSI backpressure</strong>: the table has GSIs keyed by resource attributes without
+      bucketing. GSI projections are small (1 WCU/write), but without a bucket suffix in the GSI
+      partition key, all writes for a container land on the same GSI partition.
+      This creates a hard ceiling of <code>${GSI_OPS_LIMIT} ops/s</code> — the API throttle must
+      be set below this regardless of how well the base table scales. To remove this ceiling,
+      the GSIs would need to adopt the same bucketing scheme.
+    </li>
   </ul>
 </div>
 
@@ -311,6 +325,7 @@ const COLORS = {
   option2Mean:        '#86efac',
   option2P95:         '#facc15',
   option2P99:         '#f97316',
+  gsiBackpressure:    '#f43f5e',
 };
 
 const LEGEND = [
@@ -323,6 +338,7 @@ const LEGEND = [
   { key: 'option2Mean',       label: 'Option 2 – mean',                              desc: 'Average max-safe ops/s across Monte Carlo runs.' },
   { key: 'option2P95',        label: 'Option 2 – P95',                              desc: '5% of containers get less than this due to bucket collisions.' },
   { key: 'option2P99',        label: 'Option 2 – P99 (conservative container limit)', desc: 'Only 1% of containers are permanently limited below this.' },
+  { key: 'gsiBackpressure',   label: 'GSI backpressure limit (unbucketed)',            desc: 'Without GSI bucketing, all writes for a container hit the same GSI partition (1 WCU/op). Hard ceiling at ${GSI_OPS_LIMIT} ops/s regardless of base table scale.' },
 ];
 
 const chartDatasets = [
@@ -335,6 +351,7 @@ const chartDatasets = [
   { label: 'Option 2 – mean',            data: data.option2Mean,        borderColor: COLORS.option2Mean,       borderWidth: 1.5, borderDash: [3,2], pointRadius: 2, tension: 0.3, fill: false },
   { label: 'Option 2 – P95',             data: data.option2P95,         borderColor: COLORS.option2P95,        borderWidth: 1.5, pointRadius: 2,    tension: 0.3, fill: false },
   { label: 'Option 2 – P99',             data: data.option2P99,         borderColor: COLORS.option2P99,        borderWidth: 2,   pointRadius: 3,    tension: 0.3, fill: false },
+  { label: 'GSI backpressure (unbucketed)', data: data.gsiBackpressure, borderColor: COLORS.gsiBackpressure,   borderWidth: 2.5, borderDash: [8,4], pointRadius: 0, tension: 0,   fill: false },
 ];
 
 const ctx = document.getElementById('chart').getContext('2d');

@@ -77,6 +77,7 @@
   <span class="param">Ops/s limit / partition: <strong>55</strong></span>
   <span class="param">Buckets (option 2): <strong>32</strong></span>
   <span class="param">Option 2 ceiling: <strong>1,745 ops/s</strong></span>
+  <span class="param">GSI backpressure: <strong>600 ops/s</strong></span>
   <span class="param">Runs / point: <strong>20,000</strong></span>
 </div>
 
@@ -113,12 +114,20 @@
       containers will have an unlucky bucket-to-partition mapping that permanently limits them below P99.
       Once N ≥ 32, load plateaus near <code>1745 ops/s</code>.
     </li>
+    <li>
+      <strong>GSI backpressure</strong>: the table has GSIs keyed by resource attributes without
+      bucketing. GSI projections are small (1 WCU/write), but without a bucket suffix in the GSI
+      partition key, all writes for a container land on the same GSI partition.
+      This creates a hard ceiling of <code>600 ops/s</code> — the API throttle must
+      be set below this regardless of how well the base table scales. To remove this ceiling,
+      the GSIs would need to adopt the same bucketing scheme.
+    </li>
   </ul>
 </div>
 
 <script>
 const labels = [4,6,8,12,16,24,32,48,64,96,128,192,256,384,512,768,1024,1536,2048];
-const data = {"currentDesign":[55,55,55,55,55,55,55,55,55,55,55,55,55,55,55,55,55,55,55],"option1Analytical":[218,327,436,655,873,1309,1745,2618,3491,5236,6982,10473,13964,20945,27927,41891,55855,83782,111709],"option1P50":[192,281,367,539,708,1040,1369,2020,2663,3933,5189,7678,10149,15022,19856,29442,38942,57779,76497],"option1P99":[158,234,310,460,608,903,1193,1770,2343,3492,4621,6848,9077,13516,17938,26621,35350,52611,69917],"option2Theoretical":[1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745],"option2P50":[159,218,249,349,349,436,582,582,582,873,873,873,873,873,873,1745,1745,1745,1745],"option2Mean":[159,207,248,312,362,438,494,578,642,729,783,849,901,989,1055,1170,1252,1361,1436],"option2P95":[125,159,194,249,291,349,349,436,436,582,582,582,582,873,873,873,873,873,873],"option2P99":[116,145,175,194,249,291,291,349,436,436,436,582,582,582,582,873,873,873,873]};
+const data = {"currentDesign":[55,55,55,55,55,55,55,55,55,55,55,55,55,55,55,55,55,55,55],"option1Analytical":[218,327,436,655,873,1309,1745,2618,3491,5236,6982,10473,13964,20945,27927,41891,55855,83782,111709],"option1P50":[192,281,367,539,708,1040,1369,2020,2663,3933,5189,7678,10149,15022,19856,29442,38942,57779,76497],"option1P99":[158,234,310,460,608,903,1193,1770,2343,3492,4621,6848,9077,13516,17938,26621,35350,52611,69917],"option2Theoretical":[1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745,1745],"option2P50":[159,218,249,349,349,436,582,582,582,873,873,873,873,873,873,1745,1745,1745,1745],"option2Mean":[159,207,248,312,362,438,494,578,642,729,783,849,901,989,1055,1170,1252,1361,1436],"option2P95":[125,159,194,249,291,349,349,436,436,582,582,582,582,873,873,873,873,873,873],"option2P99":[116,145,175,194,249,291,291,349,436,436,436,582,582,582,582,873,873,873,873],"gsiBackpressure":[600,600,600,600,600,600,600,600,600,600,600,600,600,600,600,600,600,600,600]};
 
 const COLORS = {
   currentDesign:      '#ef4444',
@@ -130,6 +139,7 @@ const COLORS = {
   option2Mean:        '#86efac',
   option2P95:         '#facc15',
   option2P99:         '#f97316',
+  gsiBackpressure:    '#f43f5e',
 };
 
 const LEGEND = [
@@ -142,6 +152,7 @@ const LEGEND = [
   { key: 'option2Mean',       label: 'Option 2 – mean',                              desc: 'Average max-safe ops/s across Monte Carlo runs.' },
   { key: 'option2P95',        label: 'Option 2 – P95',                              desc: '5% of containers get less than this due to bucket collisions.' },
   { key: 'option2P99',        label: 'Option 2 – P99 (conservative container limit)', desc: 'Only 1% of containers are permanently limited below this.' },
+  { key: 'gsiBackpressure',   label: 'GSI backpressure limit (unbucketed)',            desc: 'Without GSI bucketing, all writes for a container hit the same GSI partition (1 WCU/op). Hard ceiling at 600 ops/s regardless of base table scale.' },
 ];
 
 const chartDatasets = [
@@ -154,6 +165,7 @@ const chartDatasets = [
   { label: 'Option 2 – mean',            data: data.option2Mean,        borderColor: COLORS.option2Mean,       borderWidth: 1.5, borderDash: [3,2], pointRadius: 2, tension: 0.3, fill: false },
   { label: 'Option 2 – P95',             data: data.option2P95,         borderColor: COLORS.option2P95,        borderWidth: 1.5, pointRadius: 2,    tension: 0.3, fill: false },
   { label: 'Option 2 – P99',             data: data.option2P99,         borderColor: COLORS.option2P99,        borderWidth: 2,   pointRadius: 3,    tension: 0.3, fill: false },
+  { label: 'GSI backpressure (unbucketed)', data: data.gsiBackpressure, borderColor: COLORS.gsiBackpressure,   borderWidth: 2.5, borderDash: [8,4], pointRadius: 0, tension: 0,   fill: false },
 ];
 
 const ctx = document.getElementById('chart').getContext('2d');
