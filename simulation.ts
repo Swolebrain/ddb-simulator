@@ -386,9 +386,14 @@ new Chart(ctx, {
           font: { size: 12 },
           padding: { top: 8 },
         },
+        afterBuildTicks: scale => {
+          scale.ticks = labels.map(v => ({ value: v }));
+        },
         ticks: {
           color: '#64748b',
-          callback: v => Number.isInteger(Math.log2(v)) || [6,12,24,48,96,192,384,768,1536].includes(+v) ? v : null,
+          maxRotation: 45,
+          minRotation: 45,
+          callback: v => v,
         },
         grid: { color: '#1e2a3a' },
       },
