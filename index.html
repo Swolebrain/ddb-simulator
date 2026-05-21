@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DDB Monte Carlo Simulator</title>
+    <style>
+      body { font-family: sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; }
+      .slider-row { display: flex; align-items: center; gap: 12px; margin: 16px 0; }
+      input[type=range] { flex: 1; }
+      canvas { margin: 10px 0; max-height: 250px; }
+      #status { color: #e67e22; font-weight: bold; margin-left: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>DDB Monte Carlo Simulator</h1>
+    <div class="slider-row">
+      <label>nested_resources:</label>
+      <input type="range" id="nested-resources-slider" min="10" max="1000" step="1" value="100" />
+      <span id="nested-resources-value">100</span>
+    </div>
+    <div class="slider-row">
+      <label>page_size:</label>
+      <input type="range" id="page-size-slider" min="10" max="100" step="1" value="10" />
+      <span id="page-size-value">10</span>
+    </div>
+    <div class="slider-row">
+      <label>parallel_fetches (C):</label>
+      <input type="range" id="parallel-slider" min="1" max="31" step="1" value="2" />
+      <span id="parallel-value">2</span>
+      <span id="status"></span>
+    </div>
+    <canvas id="chart-rcu"></canvas>
+    <canvas id="chart-queries"></canvas>
+    <canvas id="chart-lat-mean"></canvas>
+    <canvas id="chart-lat-p50"></canvas>
+    <canvas id="chart-lat-p99"></canvas>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
