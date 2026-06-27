@@ -63,12 +63,23 @@
     .stage-runner { stroke: #a78bfa; }
     .prod-runner { stroke: #fb7185; }
     @keyframes spinDash { to { stroke-dashoffset: -32; } }
-    .metrics { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; padding: 12px; border-top: 1px solid rgba(148, 163, 184, 0.18); }
+    .metrics { display: grid; grid-template-columns: repeat(9, 1fr); gap: 8px; padding: 12px; border-top: 1px solid rgba(148, 163, 184, 0.18); }
     .metric { background: rgba(15, 23, 42, 0.86); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 14px; padding: 10px 12px; }
     .metric div:first-child { color: #91a3bc; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
     .metric div:last-child { color: #fff; font-size: 1.35rem; font-weight: 900; font-variant-numeric: tabular-nums; }
     .legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 12px; color: #9fb2ca; font-size: 0.82rem; }
     .dot { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+    .model-explanation {
+      margin-top: 18px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 20px;
+      padding: 18px 20px;
+      background: rgba(15, 23, 42, 0.62);
+      color: #b6c4d8;
+    }
+    .model-explanation h2 { margin: 0 0 10px; color: #f8fafc; font-size: 1.05rem; }
+    .model-explanation p { max-width: 1060px; margin: 0 0 10px; }
+    .model-explanation p:last-child { margin-bottom: 0; }
     @media (max-width: 900px) {
       main { padding: 14px; }
       header { display: block; }
@@ -90,8 +101,8 @@
 
     <section class="controls" aria-label="Simulation controls">
       <label>PR CI success probability <span class="value" id="ciSuccessValue"></span><input id="ciSuccess" type="range" min="0" max="100" value="80" /></label>
-      <label>Staging defect rate / change <span class="value" id="stagingDefectValue"></span><input id="stagingDefect" type="range" min="0" max="60" value="8" /></label>
-      <label>Production defect rate / change <span class="value" id="productionDefectValue"></span><input id="productionDefect" type="range" min="0" max="40" value="3" /></label>
+      <label>Staging defect rate / change <span class="value" id="stagingDefectValue"></span><input id="stagingDefect" type="range" min="0" max="15" step="0.1" value="8" /></label>
+      <label>Production defect rate / change <span class="value" id="productionDefectValue"></span><input id="productionDefect" type="range" min="0" max="15" step="0.1" value="3" /></label>
       <label>Code production rate <span class="value" id="produceRateValue"></span><input id="produceRate" type="range" min="1" max="10" value="5" /></label>
       <label>Restart simulation <span class="value">clear state</span><button id="reset" type="button">Reset</button></label>
     </section>
@@ -114,6 +125,9 @@
         <div class="metric"><div>In Main</div><div id="mainMetric">0</div></div>
         <div class="metric"><div>Staging Runs</div><div id="stagingMetric">0</div></div>
         <div class="metric"><div>Prod Runs</div><div id="prodMetric">0</div></div>
+        <div class="metric"><div>Production Fires</div><div id="prodFiresMetric">0</div></div>
+        <div class="metric"><div>Avg Prod Size</div><div id="avgProdSizeMetric">0.0</div></div>
+        <div class="metric"><div>Fires/Prod. Deployment</div><div id="firesPerProdMetric">0.00</div></div>
         <div class="metric"><div>Released</div><div id="releasedMetric">0</div></div>
       </div>
     </section>
@@ -124,6 +138,12 @@
       <span><span class="dot" style="background:#fda4af"></span>production batch</span>
       <span><span class="dot" style="background:#ff0000"></span>defective change or developer fixing</span>
     </div>
+    <section class="model-explanation">
+      <h2>How To Read This Model</h2>
+      <p>This simulation treats each colored block as one change created by one developer. Pull requests are independent: CI, review feedback, and PR fixes happen per change, so one bad PR does not stop unrelated PRs from continuing through the workflow.</p>
+      <p>Staging represents the shared integration environment. It keeps accepting new changes while defects are waiting to be fixed, so work can keep piling up there. When staging finds a defect, the bad block stays red in staging and the responsible developer creates a red fix block with the same number. Fix blocks still flow through CI and main, but they do not fail CI. Production cannot run until every red staging block has its matching fix arrive back in staging.</p>
+      <p>Production verification models a rollback/fire. If production finds a defect, the deployment moves back to staging, the responsible developers create fixes, and the production fire means everyone stops working on new changes until the next successful production deployment. Blocks that have already passed staging or production are shown light green and will not fail that same stage again.</p>
+    </section>
   </main>
 
   <script>
@@ -186,6 +206,8 @@
       released: 0,
       stagingRuns: 0,
       prodRuns: 0,
+      productionFires: 0,
+      totalProdChanges: 0,
       lastTime: 0
     };
     const panelRects = {};
@@ -450,6 +472,7 @@
     function startProduction(batch) {
       state.productionBusy = true;
       state.prodRuns++;
+      state.totalProdChanges += batch.length;
       const target = coords.production;
       batch.forEach((block, index) => {
         block.status = 'production';
@@ -481,6 +504,7 @@
 
     function handleProductionFailure(batch, defective) {
       state.productionBlocked = true;
+      state.productionFires++;
       setProdFireActive(true);
       batch.forEach((block, index) => {
         block.status = 'staging';
@@ -572,6 +596,8 @@
       state.released = 0;
       state.stagingRuns = 0;
       state.prodRuns = 0;
+      state.productionFires = 0;
+      state.totalProdChanges = 0;
       setStageFailed('staging', false);
       setStageFailed('production', false);
       devs.forEach((dev) => {
@@ -596,6 +622,9 @@
       document.getElementById('mainMetric').textContent = state.main.length;
       document.getElementById('stagingMetric').textContent = state.stagingRuns;
       document.getElementById('prodMetric').textContent = state.prodRuns;
+      document.getElementById('prodFiresMetric').textContent = state.productionFires;
+      document.getElementById('avgProdSizeMetric').textContent = state.prodRuns === 0 ? '0.0' : (state.totalProdChanges / state.prodRuns).toFixed(1);
+      document.getElementById('firesPerProdMetric').textContent = state.prodRuns === 0 ? '0.00' : (state.productionFires / state.prodRuns).toFixed(2);
       document.getElementById('releasedMetric').textContent = state.released;
       devs.forEach((dev) => {
         const pr = staticLayer.querySelector('.dev-pr-fixes-' + dev.id);
@@ -629,7 +658,7 @@
           }
         }
         if (block.status === 'ci' && now >= block.ciDoneAt) {
-          if (Math.random() < config.ciSuccessProbability) mergeToMain(block);
+          if (block.isFix || Math.random() < config.ciSuccessProbability) mergeToMain(block);
           else handleCiFailure(block);
         }
       });
