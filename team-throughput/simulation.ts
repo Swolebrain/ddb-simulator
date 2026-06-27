@@ -60,11 +60,15 @@ function generateHtml(): string {
     .panel-title { fill: #f8fafc; font-size: 18px; font-weight: 800; letter-spacing: -0.02em; }
     .panel-subtitle { fill: #91a3bc; font-size: 12px; }
     .developer { fill: rgba(30, 41, 59, 0.94); stroke: rgba(125, 211, 252, 0.42); stroke-width: 1.2; }
+    .developer.fixing { fill: rgba(127, 29, 29, 0.94); stroke: rgba(248, 113, 113, 0.9); }
+    .developer.prod-freeze { fill: rgba(127, 29, 29, 0.94); stroke: rgba(248, 113, 113, 0.72); }
     .developer-label { fill: #e0f2fe; font-size: 14px; font-weight: 800; }
     .queue-label { fill: #fbbf24; font-size: 11px; font-weight: 800; }
     .lane { stroke: rgba(148, 163, 184, 0.16); stroke-width: 2; stroke-dasharray: 7 8; }
     .block { stroke: rgba(255,255,255,0.72); stroke-width: 1; rx: 4; filter: drop-shadow(0 6px 8px rgba(0,0,0,0.3)); }
     .block-label { fill: #03111f; font-size: 9px; font-weight: 900; pointer-events: none; }
+    .fix-label { fill: #ffffff; font-size: 10px; font-weight: 950; pointer-events: none; }
+    .stage-failed { fill: #991b1b; stroke: #f87171; }
     .ci-runner { fill: none; stroke: #38bdf8; stroke-width: 2; stroke-linecap: round; stroke-dasharray: 8 8; animation: spinDash 1s linear infinite; opacity: 0.9; }
     .stage-runner { stroke: #a78bfa; }
     .prod-runner { stroke: #fb7185; }
@@ -73,22 +77,6 @@ function generateHtml(): string {
     .metric { background: rgba(15, 23, 42, 0.86); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 14px; padding: 10px 12px; }
     .metric div:first-child { color: #91a3bc; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
     .metric div:last-child { color: #fff; font-size: 1.35rem; font-weight: 900; font-variant-numeric: tabular-nums; }
-    .freeze {
-      position: absolute;
-      inset: 0;
-      display: none;
-      place-items: center;
-      background: rgba(2, 6, 23, 0.36);
-      backdrop-filter: blur(2px);
-      color: #fecaca;
-      font-size: clamp(2rem, 5vw, 5rem);
-      font-weight: 950;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      text-shadow: 0 10px 30px rgba(0,0,0,0.7);
-      pointer-events: none;
-    }
-    .freeze.visible { display: grid; }
     .legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 12px; color: #9fb2ca; font-size: 0.82rem; }
     .dot { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
     @media (max-width: 900px) {
@@ -106,12 +94,12 @@ function generateHtml(): string {
     <header>
       <div>
         <h1>Software Release Pipeline Simulation</h1>
-        <p>Five developers produce code blocks. Pull-request CI runs for about three seconds, then successful blocks merge to main. Main deploys once per second when staging is idle, then staging and production workflows can fail whole batches and return every changed block to its original developer.</p>
+        <p>Five developers produce code blocks. Pull-request CI and review time varies widely, then successful blocks merge to main. Staging keeps accepting new changes while defects wait there as red blocks. The responsible developer creates a red fix block with the same number, and production only runs once every red staging block has been replaced by its fix.</p>
       </div>
     </header>
 
     <section class="controls" aria-label="Simulation controls">
-      <label>PR CI success probability <span class="value" id="ciSuccessValue"></span><input id="ciSuccess" type="range" min="0" max="100" value="78" /></label>
+      <label>PR CI success probability <span class="value" id="ciSuccessValue"></span><input id="ciSuccess" type="range" min="0" max="100" value="80" /></label>
       <label>Staging defect rate / change <span class="value" id="stagingDefectValue"></span><input id="stagingDefect" type="range" min="0" max="60" value="8" /></label>
       <label>Production defect rate / change <span class="value" id="productionDefectValue"></span><input id="productionDefect" type="range" min="0" max="40" value="3" /></label>
       <label>Code production rate <span class="value" id="produceRateValue"></span><input id="produceRate" type="range" min="1" max="10" value="5" /></label>
@@ -123,17 +111,16 @@ function generateHtml(): string {
         <defs>
           <linearGradient id="ciGradient" x1="0" x2="1"><stop stop-color="#082f49"/><stop offset="1" stop-color="#164e63"/></linearGradient>
           <linearGradient id="mainGradient" x1="0" x2="1"><stop stop-color="#14532d"/><stop offset="1" stop-color="#166534"/></linearGradient>
-          <linearGradient id="stageGradient" x1="0" x2="1"><stop stop-color="#3b0764"/><stop offset="1" stop-color="#581c87"/></linearGradient>
-          <linearGradient id="prodGradient" x1="0" x2="1"><stop stop-color="#7f1d1d"/><stop offset="1" stop-color="#9f1239"/></linearGradient>
+          <linearGradient id="stageGradient" x1="0" x2="1"><stop stop-color="#14532d"/><stop offset="1" stop-color="#166534"/></linearGradient>
+          <linearGradient id="prodGradient" x1="0" x2="1"><stop stop-color="#14532d"/><stop offset="1" stop-color="#166534"/></linearGradient>
         </defs>
         <g id="staticLayer"></g>
         <g id="batchLayer"></g>
         <g id="blockLayer"></g>
       </svg>
-      <div class="freeze" id="freeze">Pipeline Frozen</div>
       <div class="metrics">
         <div class="metric"><div>Created</div><div id="createdMetric">0</div></div>
-        <div class="metric"><div>Back at Devs</div><div id="returnedMetric">0</div></div>
+        <div class="metric"><div>Fixes</div><div id="returnedMetric">0</div></div>
         <div class="metric"><div>In Main</div><div id="mainMetric">0</div></div>
         <div class="metric"><div>Staging Runs</div><div id="stagingMetric">0</div></div>
         <div class="metric"><div>Prod Runs</div><div id="prodMetric">0</div></div>
@@ -145,7 +132,7 @@ function generateHtml(): string {
       <span><span class="dot" style="background:#86efac"></span>merged to main</span>
       <span><span class="dot" style="background:#c4b5fd"></span>staging batch</span>
       <span><span class="dot" style="background:#fda4af"></span>production batch</span>
-      <span><span class="dot" style="background:#fbbf24"></span>returned/accumulated at developer</span>
+      <span><span class="dot" style="background:#ff0000"></span>defective change or developer fixing</span>
     </div>
   </main>
 
@@ -154,14 +141,15 @@ function generateHtml(): string {
     const staticLayer = document.getElementById('staticLayer');
     const blockLayer = document.getElementById('blockLayer');
     const batchLayer = document.getElementById('batchLayer');
-    const freezeEl = document.getElementById('freeze');
     const NS = 'http://www.w3.org/2000/svg';
 
     const config = {
-      ciDurationMs: 3000,
+      minCiDurationMs: 900,
+      maxCiDurationMs: 7600,
+      stagingEmptyDeployDelayMs: 300,
       stagingDurationMs: 3600,
       productionDurationMs: 3000,
-      ciSuccessProbability: 0.78,
+      ciSuccessProbability: 0.8,
       stagingDefectRate: 0.08,
       productionDefectRate: 0.03,
       productionRate: 5
@@ -182,6 +170,11 @@ function generateHtml(): string {
       w: 245,
       h: 82,
       returned: 0,
+      prFixes: 0,
+      stagingFixes: 0,
+      prodFires: 0,
+      shipped: 0,
+      fixCount: 0,
       nextAt: 0
     }));
 
@@ -190,10 +183,14 @@ function generateHtml(): string {
       nextId: 1,
       blocks: [],
       main: [],
+      staging: [],
+      outstandingFixes: [],
       stagingBusy: false,
       productionBusy: false,
-      frozenUntil: 0,
-      nextDeployAt: 0,
+      prodFireActive: false,
+      stagingEmptySince: 0,
+      stagingBlocked: false,
+      productionBlocked: false,
       created: 0,
       returned: 0,
       released: 0,
@@ -201,6 +198,7 @@ function generateHtml(): string {
       prodRuns: 0,
       lastTime: 0
     };
+    const panelRects = {};
 
     function el(name, attrs, parent) {
       const node = document.createElementNS(NS, name);
@@ -216,17 +214,18 @@ function generateHtml(): string {
     }
 
     function drawPanel(box, title, subtitle, fill) {
-      el('rect', { x: box.x, y: box.y, width: box.w, height: box.h, rx: 22, fill, stroke: 'rgba(148, 163, 184, 0.38)', 'stroke-width': 1.5 }, staticLayer);
+      const rect = el('rect', { x: box.x, y: box.y, width: box.w, height: box.h, rx: 22, fill, stroke: 'rgba(148, 163, 184, 0.38)', 'stroke-width': 1.5 }, staticLayer);
       text(title, box.x + 18, box.y + 34, 'panel-title', staticLayer);
       text(subtitle, box.x + 18, box.y + 56, 'panel-subtitle', staticLayer);
+      return rect;
     }
 
     function drawStatic() {
       staticLayer.innerHTML = '';
-      drawPanel(coords.ci, 'Pull Request Workflow', 'automated tests, lint, build, review gates', 'url(#ciGradient)');
-      drawPanel(coords.main, 'Main', 'merged queue', 'url(#mainGradient)');
-      drawPanel(coords.staging, 'Staging', 'full integration tests', 'url(#stageGradient)');
-      drawPanel(coords.production, 'Production', 'post-deploy checks', 'url(#prodGradient)');
+      panelRects.ci = drawPanel(coords.ci, 'Pull Request Workflow', 'automated tests, lint, build, review gates', 'url(#ciGradient)');
+      panelRects.main = drawPanel(coords.main, 'Main', 'merged queue', 'url(#mainGradient)');
+      panelRects.staging = drawPanel(coords.staging, 'Staging', 'full integration tests', 'url(#stageGradient)');
+      panelRects.production = drawPanel(coords.production, 'Production', 'post-deploy checks', 'url(#prodGradient)');
       el('path', { d: 'M 295 350 C 330 350, 350 350, 382 350', class: 'lane' }, staticLayer);
       el('path', { d: 'M 655 350 C 675 350, 694 350, 716 350', class: 'lane' }, staticLayer);
       el('path', { d: 'M 904 350 C 930 350, 944 350, 966 350', class: 'lane' }, staticLayer);
@@ -235,10 +234,13 @@ function generateHtml(): string {
       el('circle', { cx: coords.staging.x + coords.staging.w / 2, cy: coords.staging.y + 236, r: 58, class: 'ci-runner stage-runner' }, staticLayer);
       el('circle', { cx: coords.production.x + coords.production.w / 2, cy: coords.production.y + 236, r: 48, class: 'ci-runner prod-runner' }, staticLayer);
       devs.forEach((dev) => {
-        el('rect', { x: dev.x, y: dev.y, width: dev.w, height: dev.h, rx: 16, class: 'developer' }, staticLayer);
+        dev.rect = el('rect', { x: dev.x, y: dev.y, width: dev.w, height: dev.h, rx: 16, class: 'developer' }, staticLayer);
         text(dev.name, dev.x + 18, dev.y + 31, 'developer-label', staticLayer);
-        text('workstation + returned changes', dev.x + 18, dev.y + 52, 'panel-subtitle', staticLayer);
-        text('queued: 0', dev.x + 165, dev.y + 31, 'queue-label dev-queue-' + dev.id, staticLayer);
+        text('workstation + fix work', dev.x + 18, dev.y + 52, 'panel-subtitle', staticLayer);
+        text('PR fixes: 0', dev.x + 145, dev.y + 21, 'queue-label dev-pr-fixes-' + dev.id, staticLayer);
+        text('Stage fixes: 0', dev.x + 145, dev.y + 37, 'queue-label dev-staging-fixes-' + dev.id, staticLayer);
+        text('Prod fires: 0', dev.x + 145, dev.y + 53, 'queue-label dev-prod-fires-' + dev.id, staticLayer);
+        text('Shipped: 0', dev.x + 145, dev.y + 69, 'queue-label dev-shipped-' + dev.id, staticLayer);
       });
     }
 
@@ -265,40 +267,169 @@ function generateHtml(): string {
       return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     }
 
+    function randomCiDuration() {
+      const span = config.maxCiDurationMs - config.minCiDurationMs;
+      return config.minCiDurationMs + Math.random() * span;
+    }
+
+    function setStageFailed(stage, failed) {
+      const rect = panelRects[stage];
+      if (rect) rect.classList.toggle('stage-failed', failed);
+    }
+
+    function setProdFireActive(active) {
+      state.prodFireActive = active;
+      devs.forEach((dev) => {
+        if (dev.rect) dev.rect.classList.toggle('prod-freeze', active && !dev.fixing);
+      });
+    }
+
+    function markDeveloperFixing(dev, fixing) {
+      dev.fixCount = Math.max(0, dev.fixCount + (fixing ? 1 : -1));
+      dev.fixing = dev.fixCount > 0;
+      if (dev.rect) {
+        dev.rect.classList.toggle('fixing', dev.fixing);
+        dev.rect.classList.toggle('prod-freeze', state.prodFireActive && !dev.fixing);
+      }
+    }
+
+    function markStagePassed(block) {
+      block.stagingPassed = true;
+      block.rect.setAttribute('fill', '#bbf7d0');
+      block.rect.setAttribute('stroke', 'rgba(255,255,255,0.72)');
+    }
+
+    function sendToCi(block) {
+      const ciX = coords.ci.x + 22 + Math.random() * (coords.ci.w - 58);
+      const ciY = coords.ci.y + 84 + Math.random() * (coords.ci.h - 138);
+      block.status = 'to-ci';
+      block.rect.setAttribute('fill', block.isFix ? '#ff0000' : colors[block.devId]);
+      block.rect.setAttribute('stroke', 'rgba(255,255,255,0.72)');
+      moveTo(block, ciX, ciY, 850, () => {
+        block.status = 'ci';
+        block.ciDoneAt = performance.now() + randomCiDuration();
+      });
+    }
+
+    function createLocalPrFix(dev, onDone) {
+      markDeveloperFixing(dev, true);
+      dev.returned++;
+      dev.prFixes++;
+      state.returned++;
+      const fix = { id: 'FIX', devId: dev.id, status: 'fix', x: dev.x + dev.w - 58, y: dev.y + 50, node: null, rect: null, move: null };
+      const g = el('g', {}, blockLayer);
+      el('rect', { width: 42, height: 22, rx: 5, class: 'block', fill: '#dc2626' }, g);
+      const label = el('text', { x: 21, y: 15, 'text-anchor': 'middle', class: 'fix-label' }, g);
+      label.textContent = 'FIX';
+      fix.node = g;
+      setBlockPosition(fix, fix.x, fix.y);
+      setTimeout(() => {
+        fix.node.remove();
+        markDeveloperFixing(dev, false);
+        onDone();
+      }, 2600 + Math.random() * 2200);
+    }
+
+    function createPipelineFixBlock(broken, sourceStage) {
+      const dev = devs[broken.devId];
+      markDeveloperFixing(dev, true);
+      dev.returned++;
+      if (sourceStage === 'staging') dev.stagingFixes++;
+      if (sourceStage === 'production') dev.prodFires++;
+      state.returned++;
+      const fix = { id: broken.id, devId: broken.devId, status: 'new', x: dev.x + dev.w - 42, y: dev.y + 51, node: null, rect: null, move: null, isFix: true, fixesBlockId: broken.id, sourceStage, stagingPassed: false, prodPassed: false };
+      makeVisualBlock(fix);
+      fix.rect.setAttribute('fill', '#ff0000');
+      fix.rect.setAttribute('stroke', '#ffffff');
+      setBlockPosition(fix, fix.x, fix.y);
+      state.blocks.push(fix);
+      state.created++;
+      state.outstandingFixes.push({ broken, fix, sourceStage });
+      sendToCi(fix);
+    }
+
+    function markDefective(block) {
+      block.defective = true;
+      block.rect.setAttribute('fill', '#ff0000');
+      block.rect.setAttribute('stroke', '#ffffff');
+    }
+
     function createBlock(dev, now) {
-      const block = { id: state.nextId++, devId: dev.id, status: 'new', x: dev.x + dev.w - 42, y: dev.y + 51, node: null, rect: null, move: null };
+      const block = { id: state.nextId++, devId: dev.id, status: 'new', x: dev.x + dev.w - 42, y: dev.y + 51, node: null, rect: null, move: null, stagingPassed: false, prodPassed: false };
       makeVisualBlock(block);
       setBlockPosition(block, block.x, block.y);
       state.blocks.push(block);
       state.created++;
 
-      const ciX = coords.ci.x + 22 + Math.random() * (coords.ci.w - 58);
-      const ciY = coords.ci.y + 84 + Math.random() * (coords.ci.h - 138);
-      block.status = 'to-ci';
-      moveTo(block, ciX, ciY, 850, () => {
-        block.status = 'ci';
-        block.ciDoneAt = performance.now() + config.ciDurationMs;
-      });
+      sendToCi(block);
       dev.nextAt = now + 650 + Math.random() * (2200 - config.productionRate * 160);
     }
 
-    function returnToDeveloper(block) {
-      block.status = 'returning';
-      block.rect.setAttribute('fill', '#fbbf24');
-      const dev = devs[block.devId];
-      dev.returned++;
-      state.returned++;
-      const col = (dev.returned - 1) % 7;
-      const row = Math.floor((dev.returned - 1) / 7) % 2;
-      moveTo(block, dev.x + 18 + col * 31, dev.y + 58 + row * 22, 900, () => { block.status = 'returned'; });
+    function handleCiFailure(block) {
+      markDefective(block);
+      block.status = 'ci-defect';
+      createLocalPrFix(devs[block.devId], () => {
+        block.defective = false;
+        sendToCi(block);
+      });
     }
 
     function mergeToMain(block) {
       block.status = 'to-main';
-      block.rect.setAttribute('fill', '#86efac');
+      block.rect.setAttribute('fill', block.isFix ? '#ff0000' : '#86efac');
       const slot = state.main.length;
       state.main.push(block);
       moveTo(block, coords.main.x + 22 + (slot % 5) * 29, coords.main.y + 78 + Math.floor(slot / 5) * 24, 780, () => { block.status = 'main'; });
+    }
+
+    function stagingPosition(index) {
+      return {
+        x: coords.staging.x + 24 + (index % 5) * 29,
+        y: coords.staging.y + 90 + Math.floor(index / 5) * 24
+      };
+    }
+
+    function setStagingBlockPosition(block, index, duration) {
+      const pos = stagingPosition(index);
+      moveTo(block, pos.x, pos.y, duration, null);
+    }
+
+    function removeBlock(block) {
+      if (block.node) block.node.remove();
+      state.blocks = state.blocks.filter((candidate) => candidate !== block);
+      state.main = state.main.filter((candidate) => candidate !== block);
+      state.staging = state.staging.filter((candidate) => candidate !== block);
+    }
+
+    function updateStageColors() {
+      state.stagingBlocked = state.outstandingFixes.length > 0;
+      state.productionBlocked = state.outstandingFixes.some((item) => item.sourceStage === 'production');
+      setStageFailed('staging', state.stagingBlocked);
+      setStageFailed('production', state.productionBlocked);
+    }
+
+    function resolveArrivedFixes() {
+      const resolved = state.outstandingFixes.filter((item) => item.fix.status === 'staging' && state.staging.includes(item.fix));
+      resolved.forEach((item) => {
+        removeBlock(item.broken);
+        item.fix.isFix = false;
+        item.fix.defective = false;
+        markStagePassed(item.fix);
+        markDeveloperFixing(devs[item.fix.devId], false);
+      });
+      if (resolved.length > 0) {
+        state.outstandingFixes = state.outstandingFixes.filter((item) => !resolved.includes(item));
+        state.staging.forEach((block, index) => setStagingBlockPosition(block, index, 450));
+        updateStageColors();
+      }
+    }
+
+    function tryStartProduction() {
+      resolveArrivedFixes();
+      if (state.stagingBusy || state.productionBusy || state.outstandingFixes.length > 0 || state.staging.length === 0) return;
+      const batch = state.staging.splice(0, state.staging.length);
+      state.stagingEmptySince = performance.now();
+      startProduction(batch);
     }
 
     function startStaging(now) {
@@ -309,16 +440,20 @@ function generateHtml(): string {
       const target = coords.staging;
       batch.forEach((block, index) => {
         block.status = 'staging';
-        block.rect.setAttribute('fill', '#c4b5fd');
-        moveTo(block, target.x + 24 + (index % 5) * 29, target.y + 90 + Math.floor(index / 5) * 24, 1000, null);
+        block.rect.setAttribute('fill', block.isFix ? '#ff0000' : block.stagingPassed ? '#bbf7d0' : '#c4b5fd');
+        state.staging.push(block);
+        setStagingBlockPosition(block, state.staging.length - 1, 1000);
       });
       const badge = createBatchBadge('Full integration tests', target, batch.length, '#c4b5fd');
       setTimeout(() => {
         badge.remove();
-        const failed = batch.some(() => Math.random() < config.stagingDefectRate);
+        const defective = batch.filter((block) => !block.isFix && !block.defective && !block.stagingPassed && Math.random() < config.stagingDefectRate);
+        if (defective.length > 0) handleStagingFailure(defective);
+        batch.filter((block) => !block.isFix && !block.defective && !defective.includes(block)).forEach(markStagePassed);
+        resolveArrivedFixes();
         state.stagingBusy = false;
-        if (failed) failBatch(batch, 'staging');
-        else startProduction(batch);
+        state.stagingEmptySince = performance.now();
+        tryStartProduction();
       }, config.stagingDurationMs);
     }
 
@@ -328,17 +463,59 @@ function generateHtml(): string {
       const target = coords.production;
       batch.forEach((block, index) => {
         block.status = 'production';
-        block.rect.setAttribute('fill', '#fda4af');
         moveTo(block, target.x + 18 + (index % 4) * 30, target.y + 90 + Math.floor(index / 4) * 24, 950, null);
       });
       const badge = createBatchBadge('Production verification', target, batch.length, '#fda4af');
       setTimeout(() => {
         badge.remove();
-        const failed = batch.some(() => Math.random() < config.productionDefectRate);
-        state.productionBusy = false;
-        if (failed) failBatch(batch, 'production');
-        else releaseBatch(batch);
+        const defective = batch.filter((block) => !block.prodPassed && Math.random() < config.productionDefectRate);
+        if (defective.length > 0) handleProductionFailure(batch, defective);
+        else {
+          finishProductionSuccess(batch);
+        }
       }, config.productionDurationMs);
+    }
+
+    function createPipelineFixes(stage, defective) {
+      defective.forEach((block) => {
+        markDefective(block);
+        createPipelineFixBlock(block, stage);
+      });
+      updateStageColors();
+    }
+
+    function handleStagingFailure(defective) {
+      state.stagingBlocked = true;
+      createPipelineFixes('staging', defective);
+    }
+
+    function handleProductionFailure(batch, defective) {
+      state.productionBlocked = true;
+      setProdFireActive(true);
+      batch.forEach((block, index) => {
+        block.status = 'staging';
+        if (!defective.includes(block)) {
+          block.prodPassed = true;
+          markStagePassed(block);
+          block.rect.setAttribute('stroke', 'rgba(255,255,255,0.72)');
+        }
+        state.staging.push(block);
+        setStagingBlockPosition(block, state.staging.length - 1, 1000);
+      });
+      createPipelineFixes('production', defective);
+      state.productionBusy = false;
+      state.stagingEmptySince = performance.now();
+    }
+
+    function finishProductionSuccess(batch) {
+      state.productionBusy = false;
+      setProdFireActive(false);
+      batch.forEach((block) => {
+        block.prodPassed = true;
+        markStagePassed(block);
+      });
+      releaseBatch(batch);
+      tryStartProduction();
     }
 
     function createBatchBadge(label, target, count, color) {
@@ -351,15 +528,10 @@ function generateHtml(): string {
       return g;
     }
 
-    function failBatch(batch) {
-      state.frozenUntil = performance.now() + 1200;
-      freezeEl.classList.add('visible');
-      batch.forEach(returnToDeveloper);
-    }
-
     function releaseBatch(batch) {
       batch.forEach((block, index) => {
         block.status = 'released';
+        devs[block.devId].shipped++;
         block.rect.setAttribute('fill', '#ffffff');
         moveTo(block, 1376, 144 + (index % 14) * 26, 900, () => {
           block.node.remove();
@@ -397,21 +569,38 @@ function generateHtml(): string {
       state.nextId = 1;
       state.blocks = [];
       state.main = [];
+      state.staging = [];
+      state.outstandingFixes = [];
       state.stagingBusy = false;
       state.productionBusy = false;
-      state.frozenUntil = 0;
-      state.nextDeployAt = 0;
+      setProdFireActive(false);
+      state.stagingEmptySince = performance.now();
+      state.stagingBlocked = false;
+      state.productionBlocked = false;
       state.created = 0;
       state.returned = 0;
       state.released = 0;
       state.stagingRuns = 0;
       state.prodRuns = 0;
-      freezeEl.classList.remove('visible');
-      devs.forEach((dev) => { dev.returned = 0; dev.nextAt = 0; });
+      setStageFailed('staging', false);
+      setStageFailed('production', false);
+      devs.forEach((dev) => {
+        dev.returned = 0;
+        dev.prFixes = 0;
+        dev.stagingFixes = 0;
+        dev.prodFires = 0;
+        dev.shipped = 0;
+        dev.fixCount = 0;
+        dev.fixing = false;
+        dev.nextAt = 0;
+        if (dev.rect) {
+          dev.rect.classList.remove('fixing');
+          dev.rect.classList.remove('prod-freeze');
+        }
+      });
     }
 
     function updateMetrics(now) {
-      freezeEl.classList.toggle('visible', now < state.frozenUntil);
       document.getElementById('createdMetric').textContent = state.created;
       document.getElementById('returnedMetric').textContent = state.returned;
       document.getElementById('mainMetric').textContent = state.main.length;
@@ -419,21 +608,23 @@ function generateHtml(): string {
       document.getElementById('prodMetric').textContent = state.prodRuns;
       document.getElementById('releasedMetric').textContent = state.released;
       devs.forEach((dev) => {
-        const q = staticLayer.querySelector('.dev-queue-' + dev.id);
-        if (q) q.textContent = 'queued: ' + dev.returned;
+        const pr = staticLayer.querySelector('.dev-pr-fixes-' + dev.id);
+        const staging = staticLayer.querySelector('.dev-staging-fixes-' + dev.id);
+        const prod = staticLayer.querySelector('.dev-prod-fires-' + dev.id);
+        const shipped = staticLayer.querySelector('.dev-shipped-' + dev.id);
+        if (pr) pr.textContent = 'PR fixes: ' + dev.prFixes;
+        if (staging) staging.textContent = 'Stage fixes: ' + dev.stagingFixes;
+        if (prod) prod.textContent = 'Prod fires: ' + dev.prodFires;
+        if (shipped) shipped.textContent = 'Shipped: ' + dev.shipped;
       });
     }
 
     function tick(now) {
-      const frozen = now < state.frozenUntil;
-      if (!frozen) {
-        devs.forEach((dev) => {
-          if (now >= dev.nextAt && state.blocks.length < 120) createBlock(dev, now);
-        });
-        if (now >= state.nextDeployAt) {
-          startStaging(now);
-          state.nextDeployAt = now + 1000;
-        }
+      devs.forEach((dev) => {
+        if (!state.prodFireActive && !dev.fixing && now >= dev.nextAt && state.blocks.length < 350) createBlock(dev, now);
+      });
+      if (!state.stagingBusy && !state.productionBusy && state.main.length > 0 && now - state.stagingEmptySince >= config.stagingEmptyDeployDelayMs) {
+        startStaging(now);
       }
 
       state.blocks.forEach((block) => {
@@ -449,7 +640,7 @@ function generateHtml(): string {
         }
         if (block.status === 'ci' && now >= block.ciDoneAt) {
           if (Math.random() < config.ciSuccessProbability) mergeToMain(block);
-          else returnToDeveloper(block);
+          else handleCiFailure(block);
         }
       });
 
