@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DDB Bucketing Performance</title>
+    <link rel="icon" href="data:," />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at top left, #12365f 0, #0f172a 42%, #020617 100%);
+        color: #e5edf8;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main { width: min(1160px, 100%); margin: 0 auto; padding: 28px 18px 44px; }
+      a { color: #7dd3fc; }
+      h1 { margin: 0 0 8px; font-size: clamp(2rem, 5vw, 4.25rem); letter-spacing: -0.07em; line-height: 0.95; }
+      .subtitle { max-width: 820px; margin: 0 0 24px; color: #9fb0c8; line-height: 1.55; }
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(220px, 1fr));
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+      label {
+        display: grid;
+        gap: 8px;
+        padding: 14px;
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        border-radius: 16px;
+        background: rgba(15, 23, 42, 0.74);
+        color: #b8c7db;
+        font-weight: 700;
+      }
+      input[type="range"] { width: 100%; accent-color: #38bdf8; }
+      .value { color: #fff; font-variant-numeric: tabular-nums; }
+      #status { min-height: 24px; color: #fbbf24; font-weight: 900; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 14px; }
+      .card {
+        min-height: 300px;
+        padding: 18px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 18px;
+        background: rgba(15, 23, 42, 0.78);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.26);
+      }
+      canvas { width: 100%; max-height: 260px; }
+      .notes {
+        margin-top: 18px;
+        padding: 16px 18px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 18px;
+        background: rgba(2, 6, 23, 0.48);
+        color: #aab9cd;
+        line-height: 1.55;
+      }
+      @media (max-width: 760px) {
+        .controls { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p><a href="../">← All simulations</a></p>
+      <h1>DDB Bucketing Performance</h1>
+      <p class="subtitle">Monte Carlo comparison of three listing strategies for bucketed DynamoDB data: sequential, full parallel, and hybrid parallel fetches.</p>
+      <section class="controls" aria-label="Simulation controls">
+        <label>
+          nested_resources: <span class="value" id="nested-resources-value">100</span>
+          <input type="range" id="nested-resources-slider" min="10" max="1000" step="1" value="100" />
+        </label>
+        <label>
+          page_size: <span class="value" id="page-size-value">10</span>
+          <input type="range" id="page-size-slider" min="10" max="100" step="1" value="10" />
+        </label>
+        <label>
+          parallel_fetches (C): <span class="value" id="parallel-value">2</span>
+          <input type="range" id="parallel-slider" min="1" max="31" step="1" value="2" />
+        </label>
+      </section>
+      <div id="status" aria-live="polite"></div>
+      <section class="grid" aria-label="Simulation results">
+        <div class="card"><canvas id="chart-rcu"></canvas></div>
+        <div class="card"><canvas id="chart-queries"></canvas></div>
+        <div class="card"><canvas id="chart-lat-mean"></canvas></div>
+        <div class="card"><canvas id="chart-lat-p50"></canvas></div>
+        <div class="card"><canvas id="chart-lat-p99"></canvas></div>
+      </section>
+      <section class="notes">
+        <strong>Strategies:</strong> A queries buckets sequentially, B queries all non-exhausted buckets in parallel, and C uses a full first-page fan-out followed by configurable parallel bucket windows.
+      </section>
+    </main>
+    <script>
+      const NUM_BUCKETS = 31;
+      const NUM_RUNS = 1000;
+      const PAGE_SIZE = 10;
+
+      function normalRandom(mean, stdev) {
+        const u1 = Math.max(Math.random(), 1e-12);
+        const u2 = Math.random();
+        const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+        return Math.max(0.01, mean + z * stdev);
+      }
+
+      function uniformInt(min, max) {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+      }
+
+      function distributeResources(numResources) {
+        const base = numResources / NUM_BUCKETS;
+        const buckets = Array.from({ length: NUM_BUCKETS }, () => Math.max(0, Math.round(base) + uniformInt(-3, 3)));
+        let diff = numResources - buckets.reduce((a, b) => a + b, 0);
+        while (diff !== 0) {
+          const i = uniformInt(0, NUM_BUCKETS - 1);
+          if (diff > 0) { buckets[i]++; diff--; }
+          else if (buckets[i] > 0) { buckets[i]--; diff++; }
+        }
+        return buckets;
+      }
+
+      function simulateDdbQuery(itemsLeft, itemsRequested) {
+        const latency = normalRandom(10, 1);
+        const itemsReturned = Math.min(itemsLeft, itemsRequested);
+        const hasLEK = itemsLeft >= itemsRequested;
+        return { itemsReturned, hasLEK, latency };
+      }
+
+      function approachA(bucketItems, pageSize) {
+        const metrics = { totalRcu: 0, totalQueries: 0, totalPages: 0, pageLatencies: [] };
+        const remaining = [...bucketItems];
+        let currentBucket = 0;
+        while (currentBucket < NUM_BUCKETS) {
+          let pageItems = 0;
+          let pageLatency = 0;
+          let itemsNeeded = pageSize;
+          while (itemsNeeded > 0 && currentBucket < NUM_BUCKETS) {
+            const { itemsReturned, hasLEK, latency } = simulateDdbQuery(remaining[currentBucket], itemsNeeded);
+            remaining[currentBucket] -= itemsReturned;
+            pageItems += itemsReturned;
+            itemsNeeded -= itemsReturned;
+            pageLatency += latency;
+            metrics.totalRcu += itemsReturned;
+            metrics.totalQueries++;
+            if (!hasLEK) currentBucket++;
+            else break;
+          }
+          if (pageItems > 0) {
+            metrics.totalPages++;
+            metrics.pageLatencies.push(pageLatency);
+          }
+        }
+        return metrics;
+      }
+
+      function approachB(bucketItems, pageSize) {
+        const metrics = { totalRcu: 0, totalQueries: 0, totalPages: 0, pageLatencies: [] };
+        const remaining = [...bucketItems];
+        let firstNonExhausted = 0;
+        while (firstNonExhausted < NUM_BUCKETS) {
+          let pageItems = 0;
+          let itemsNeeded = pageSize;
+          const queryLatencies = [];
+          const snapshot = [...remaining];
+          const results = [];
+          for (let i = firstNonExhausted; i < NUM_BUCKETS; i++) {
+            const { itemsReturned, hasLEK, latency } = simulateDdbQuery(remaining[i], pageSize);
+            results.push({ bucket: i, returned: itemsReturned, hasLEK, latency });
+            queryLatencies.push(latency);
+            metrics.totalQueries++;
+            metrics.totalRcu += itemsReturned;
+          }
+          const pageLatency = Math.max(...queryLatencies);
+          let pageFilled = false;
+          for (const { bucket, returned, hasLEK } of results) {
+            const take = Math.min(returned, itemsNeeded);
+            remaining[bucket] -= take;
+            pageItems += take;
+            itemsNeeded -= take;
+            if (itemsNeeded === 0) {
+              if (take < returned || hasLEK) firstNonExhausted = bucket;
+              else firstNonExhausted = bucket + 1;
+              for (let j = firstNonExhausted + 1; j < NUM_BUCKETS; j++) remaining[j] = snapshot[j];
+              pageFilled = true;
+              break;
+            }
+          }
+          if (!pageFilled) firstNonExhausted = NUM_BUCKETS;
+          if (pageItems > 0) {
+            metrics.totalPages++;
+            metrics.pageLatencies.push(pageLatency);
+          }
+          while (firstNonExhausted < NUM_BUCKETS && remaining[firstNonExhausted] === 0) firstNonExhausted++;
+        }
+        return metrics;
+      }
+
+      function approachC(bucketItems, pageSize, parallelFetches = 2) {
+        const metrics = { totalRcu: 0, totalQueries: 0, totalPages: 0, pageLatencies: [] };
+        const remaining = [...bucketItems];
+        let firstNonExhausted = 0;
+        let isFirstPage = true;
+        while (firstNonExhausted < NUM_BUCKETS) {
+          let pageItems = 0;
+          let itemsNeeded = pageSize;
+          let pageLatency = 0;
+          if (isFirstPage) {
+            const snapshot = [...remaining];
+            const queryLatencies = [];
+            const results = [];
+            for (let i = 0; i < NUM_BUCKETS; i++) {
+              const { itemsReturned, hasLEK, latency } = simulateDdbQuery(remaining[i], pageSize);
+              results.push({ bucket: i, returned: itemsReturned, hasLEK, latency });
+              queryLatencies.push(latency);
+              metrics.totalQueries++;
+              metrics.totalRcu += itemsReturned;
+            }
+            pageLatency = Math.max(...queryLatencies);
+            let pageFilled = false;
+            for (const { bucket, returned, hasLEK } of results) {
+              const take = Math.min(returned, itemsNeeded);
+              remaining[bucket] -= take;
+              pageItems += take;
+              itemsNeeded -= take;
+              if (itemsNeeded === 0) {
+                if (take < returned || hasLEK) firstNonExhausted = bucket;
+                else firstNonExhausted = bucket + 1;
+                for (let j = firstNonExhausted + 1; j < NUM_BUCKETS; j++) remaining[j] = snapshot[j];
+                pageFilled = true;
+                break;
+              }
+            }
+            if (!pageFilled) firstNonExhausted = NUM_BUCKETS;
+            isFirstPage = false;
+          } else {
+            while (itemsNeeded > 0 && firstNonExhausted < NUM_BUCKETS) {
+              const pairBuckets = [];
+              for (let b = 0; b < parallelFetches && firstNonExhausted + b < NUM_BUCKETS; b++) pairBuckets.push(firstNonExhausted + b);
+              const pairResults = [];
+              const pairLatencies = [];
+              for (const i of pairBuckets) {
+                const { itemsReturned, hasLEK, latency } = simulateDdbQuery(remaining[i], pageSize);
+                pairResults.push({ bucket: i, returned: itemsReturned, hasLEK, latency });
+                pairLatencies.push(latency);
+                metrics.totalQueries++;
+                metrics.totalRcu += itemsReturned;
+              }
+              pageLatency += Math.max(...pairLatencies);
+              let filled = false;
+              for (const { bucket, returned, hasLEK } of pairResults) {
+                const take = Math.min(returned, itemsNeeded);
+                remaining[bucket] -= take;
+                pageItems += take;
+                itemsNeeded -= take;
+                if (itemsNeeded === 0) {
+                  if (take < returned || hasLEK) firstNonExhausted = bucket;
+                  else firstNonExhausted = bucket + 1;
+                  filled = true;
+                  break;
+                } else {
+                  firstNonExhausted = bucket + 1;
+                }
+              }
+              if (filled) break;
+            }
+          }
+          if (pageItems > 0) {
+            metrics.totalPages++;
+            metrics.pageLatencies.push(pageLatency);
+          }
+          while (firstNonExhausted < NUM_BUCKETS && remaining[firstNonExhausted] === 0) firstNonExhausted++;
+        }
+        return metrics;
+      }
+
+      function percentile(sorted, p) {
+        const idx = Math.ceil((p / 100) * sorted.length) - 1;
+        return sorted[Math.max(0, idx)];
+      }
+
+      function mean(arr) {
+        return arr.reduce((a, b) => a + b, 0) / arr.length;
+      }
+
+      function runSimulation(numResources, pageSize = PAGE_SIZE, parallelFetches = 2) {
+        const statsA = [[], [], []];
+        const statsB = [[], [], []];
+        const statsC = [[], [], []];
+        for (let run = 0; run < NUM_RUNS; run++) {
+          const buckets = distributeResources(numResources);
+          const mA = approachA(buckets, pageSize);
+          const mB = approachB(buckets, pageSize);
+          const mC = approachC(buckets, pageSize, parallelFetches);
+          statsA[0].push(mA.totalRcu); statsA[1].push(mA.totalQueries); statsA[2].push(mA.pageLatencies.reduce((a, b) => a + b, 0));
+          statsB[0].push(mB.totalRcu); statsB[1].push(mB.totalQueries); statsB[2].push(mB.pageLatencies.reduce((a, b) => a + b, 0));
+          statsC[0].push(mC.totalRcu); statsC[1].push(mC.totalQueries); statsC[2].push(mC.pageLatencies.reduce((a, b) => a + b, 0));
+        }
+        function agg(stats) {
+          const [r, q, l] = stats.map((s) => [...s].sort((a, b) => a - b));
+          return { rcuMean: mean(r), queriesMean: mean(q), latMean: mean(l), latP50: percentile(l, 50), latP99: percentile(l, 99) };
+        }
+        return { a: agg(statsA), b: agg(statsB), c: agg(statsC) };
+      }
+
+      const resourcesSlider = document.getElementById('nested-resources-slider');
+      const resourcesValue = document.getElementById('nested-resources-value');
+      const pageSizeSlider = document.getElementById('page-size-slider');
+      const pageSizeValue = document.getElementById('page-size-value');
+      const parallelSlider = document.getElementById('parallel-slider');
+      const parallelValue = document.getElementById('parallel-value');
+      const status = document.getElementById('status');
+      parallelSlider.max = String(NUM_BUCKETS);
+
+      const chartConfigs = [
+        { id: 'chart-rcu', title: 'RCU (Mean)', key: 'rcuMean' },
+        { id: 'chart-queries', title: 'Queries (Mean)', key: 'queriesMean' },
+        { id: 'chart-lat-mean', title: 'Latency Mean (ms)', key: 'latMean' },
+        { id: 'chart-lat-p50', title: 'Latency P50 (ms)', key: 'latP50' },
+        { id: 'chart-lat-p99', title: 'Latency P99 (ms)', key: 'latP99' },
+      ];
+      const charts = chartConfigs.map((cfg) => {
+        const ctx = document.getElementById(cfg.id).getContext('2d');
+        return new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: [''],
+            datasets: [
+              { label: 'A (Sequential)', data: [0], backgroundColor: 'rgba(56, 189, 248, 0.72)' },
+              { label: 'B (Parallel)', data: [0], backgroundColor: 'rgba(244, 114, 182, 0.72)' },
+              { label: 'C (Hybrid)', data: [0], backgroundColor: 'rgba(45, 212, 191, 0.72)' },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              title: { display: true, text: cfg.title, color: '#e5edf8', font: { size: 16, weight: 'bold' } },
+              legend: { labels: { color: '#cbd5e1' } }
+            },
+            scales: {
+              x: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(148, 163, 184, 0.1)' } },
+              y: { ticks: { color: '#9fb0c8' }, grid: { color: 'rgba(148, 163, 184, 0.1)' }, beginAtZero: true }
+            }
+          }
+        });
+      });
+
+      function run() {
+        const numResources = parseInt(resourcesSlider.value, 10);
+        const pageSize = parseInt(pageSizeSlider.value, 10);
+        const parallelFetches = parseInt(parallelSlider.value, 10);
+        resourcesValue.textContent = String(numResources);
+        pageSizeValue.textContent = String(pageSize);
+        parallelValue.textContent = String(parallelFetches);
+        status.textContent = 'Running...';
+        setTimeout(() => {
+          const result = runSimulation(numResources, pageSize, parallelFetches);
+          chartConfigs.forEach((cfg, i) => {
+            charts[i].data.datasets[0].data = [result.a[cfg.key]];
+            charts[i].data.datasets[1].data = [result.b[cfg.key]];
+            charts[i].data.datasets[2].data = [result.c[cfg.key]];
+            charts[i].update();
+          });
+          status.textContent = '';
+        }, 10);
+      }
+
+      let timer;
+      function debouncedRun() {
+        clearTimeout(timer);
+        timer = window.setTimeout(run, 300);
+      }
+      resourcesSlider.addEventListener('input', () => { resourcesValue.textContent = resourcesSlider.value; debouncedRun(); });
+      pageSizeSlider.addEventListener('input', () => { pageSizeValue.textContent = pageSizeSlider.value; debouncedRun(); });
+      parallelSlider.addEventListener('input', () => { parallelValue.textContent = parallelSlider.value; debouncedRun(); });
+      run();
+    </script>
+  </body>
+</html>

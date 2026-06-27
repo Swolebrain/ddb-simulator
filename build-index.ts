@@ -1,4 +1,42 @@
-<!doctype html>
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const outputDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "docs");
+
+const simulations = [
+  {
+    title: "DDB Bucketing Scaling",
+    href: "./ddb-bucketing-scaling/",
+    description:
+      "Monte Carlo visualization of DynamoDB partition-key bucketing throughput and scaling behavior.",
+  },
+  {
+    title: "DDB Bucketing Performance",
+    href: "./ddb-bucketing-performance/",
+    description:
+      "Interactive comparison of sequential, parallel, and hybrid query strategies for bucketed DynamoDB listings.",
+  },
+  {
+    title: "Team Throughput",
+    href: "./team-throughput/",
+    description:
+      "Animated SVG simulation of developers, pull-request CI, staging, and production release flow.",
+  },
+];
+
+const cards = simulations
+  .map(
+    (simulation) => `
+      <a class="card" href="${simulation.href}">
+        <span>Simulation</span>
+        <strong>${simulation.title}</strong>
+        <p>${simulation.description}</p>
+      </a>`
+  )
+  .join("\n");
+
+const html = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -84,25 +122,12 @@
     <h1>Simulations</h1>
     <p class="intro">Standalone HTML simulations. Each route is a regular linked page so it works locally, from Vite, and on GitHub Pages from the committed <code>docs/</code> folder.</p>
     <section class="grid" aria-label="Available simulations">
-
-      <a class="card" href="./ddb-bucketing-scaling/">
-        <span>Simulation</span>
-        <strong>DDB Bucketing Scaling</strong>
-        <p>Monte Carlo visualization of DynamoDB partition-key bucketing throughput and scaling behavior.</p>
-      </a>
-
-      <a class="card" href="./ddb-bucketing-performance/">
-        <span>Simulation</span>
-        <strong>DDB Bucketing Performance</strong>
-        <p>Interactive comparison of sequential, parallel, and hybrid query strategies for bucketed DynamoDB listings.</p>
-      </a>
-
-      <a class="card" href="./team-throughput/">
-        <span>Simulation</span>
-        <strong>Team Throughput</strong>
-        <p>Animated SVG simulation of developers, pull-request CI, staging, and production release flow.</p>
-      </a>
+${cards}
     </section>
   </main>
 </body>
-</html>
+</html>`;
+
+fs.mkdirSync(outputDir, { recursive: true });
+fs.writeFileSync(path.join(outputDir, "index.html"), html, "utf8");
+console.log("Wrote docs/index.html");

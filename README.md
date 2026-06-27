@@ -1,24 +1,66 @@
-# DynamoDB Partition Key Simulator
+# Simulation Gallery
 
-Monte Carlo simulation comparing three DynamoDB partition key strategies to determine max safe ops/s per customer as partition count scales.
+Standalone HTML simulations published from `docs/` for GitHub Pages.
 
-**[Live Results →](https://swolebrain.github.io/ddb-simulator/)**
+## Simulations
 
-## Strategies Compared
+- `ddb-bucketing-scaling/` - DynamoDB partition-key bucketing throughput and scaling simulation.
+- `ddb-bucketing-performance/` - DynamoDB bucketed listing strategy performance simulation.
+- `team-throughput/` - SVG animation of developer throughput through CI, staging, and production.
 
-1. **Current design** (`PK = containerId`) — All writes hit one partition. Hard-capped at 55 ops/s.
-2. **Option 1** (`PK = containerId#resourceId`) — Uniform distribution across partitions. Scales linearly but subject to extreme-value hotspots.
-3. **Option 2** (`PK = containerId#(hash(resourceId) % 32)`) — 32-bucket scheme. Plateaus near 1,745 ops/s once N ≥ 32. Variance is structural (per-container), not temporal.
+## Local Development
 
-The simulation also models **GSI backpressure**: without bucketed GSI partition keys, a hard ceiling of 600 ops/s applies regardless of base table design.
-
-## Running
+Install dependencies:
 
 ```bash
 npm install
-npm run simulate
 ```
 
-This runs `npx ts-node simulation.ts` and generates `output.html` with an interactive Chart.js visualization.
+Run the local Vite server with generated-page reloads:
 
-Parameters: 600 WCU/partition, 11 WCU/op, 32 buckets, 20,000 Monte Carlo runs per data point.
+```bash
+npm run dev
+```
+
+Open the URL Vite prints and use the root gallery to navigate to each simulation.
+
+## Build
+
+Generate the GitHub Pages output in `docs/`:
+
+```bash
+npm run build
+```
+
+Type-check the generator sources:
+
+```bash
+npm run check
+```
+
+Preview the generated `docs/` site:
+
+```bash
+npm run preview
+```
+
+## GitHub Pages
+
+GitHub Pages should publish from the committed `docs/` folder. The build preserves `docs/.nojekyll` and regenerates:
+
+- `docs/index.html`
+- `docs/ddb-bucketing-scaling/index.html`
+- `docs/ddb-bucketing-performance/index.html`
+- `docs/team-throughput/index.html`
+
+## Precommit
+
+The Husky precommit hook runs:
+
+```bash
+npm run check
+npm run build
+git diff --exit-code -- docs
+```
+
+Commits fail if TypeScript fails, the build fails, or committed `docs/` output is stale.

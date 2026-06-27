@@ -1,18 +1,21 @@
 {
-  "name": "ddb-simulator",
+  "name": "simulation-gallery",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
+    "build": "tsx build.ts",
+    "check": "tsc --noEmit",
+    "dev": "npm run build && concurrently -k -n build,vite \"tsx watch --clear-screen=false build.ts\" \"vite --host 0.0.0.0 docs\"",
+    "preview": "npm run build && vite preview --host 0.0.0.0 --outDir docs",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "@types/node": "^24.0.7",
+    "concurrently": "^9.2.0",
+    "husky": "^9.1.7",
+    "tsx": "^4.20.3",
     "typescript": "~6.0.2",
     "vite": "^8.0.12"
-  },
-  "dependencies": {
-    "chart.js": "^4.5.1"
   }
 }
